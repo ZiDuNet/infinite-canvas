@@ -62,7 +62,8 @@ export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webd
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
-const OPENAI_BASE_URL = "https://api.openai.com";
+const OPENAI_BASE_URL = "https://sub2api.leefun.top";
+const SECONDARY_OPENAI_BASE_URL = "https://aiapi.leefun.top";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 
@@ -76,6 +77,19 @@ export const defaultConfig: AiConfig = {
             id: "default",
             name: "默认渠道",
             baseUrl: OPENAI_BASE_URL,
+            apiKey: "",
+            apiFormat: "openai",
+            models: [
+                { name: "gpt-image-2", capability: "image" },
+                { name: "grok-imagine-video", capability: "video" },
+                { name: "gpt-5.5", capability: "text" },
+                { name: "gpt-4o-mini-tts", capability: "audio" },
+            ],
+        },
+        {
+            id: "default-2",
+            name: "默认渠道2",
+            baseUrl: SECONDARY_OPENAI_BASE_URL,
             apiKey: "",
             apiFormat: "openai",
             models: [
@@ -101,7 +115,7 @@ export const defaultConfig: AiConfig = {
     videoWatermark: "false",
     systemPrompt: "",
     reasoningEffort: "auto",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts", "default-2::gpt-image-2", "default-2::grok-imagine-video", "default-2::gpt-5.5", "default-2::gpt-4o-mini-tts"],
     quality: "auto",
     size: "1:1",
     background: "",
