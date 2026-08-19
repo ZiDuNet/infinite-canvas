@@ -21,7 +21,6 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         { label: "OpenAI", value: "openai" },
         { label: "Anthropic", value: "anthropic" },
         { label: "Gemini", value: "gemini" },
-        { label: t("config.protocols.ark"), value: "ark" },
         { label: "ModelScope 免费/试用推荐", value: "modelscope" },
         { label: "Agnes AI", value: "agnes" },
     ];

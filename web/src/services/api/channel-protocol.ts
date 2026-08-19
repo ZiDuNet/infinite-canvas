@@ -1,4 +1,4 @@
-export type ChannelProbeFormat = "openai" | "gemini" | "ark" | "modelscope" | "agnes" | "anthropic";
+export type ChannelProbeFormat = "openai" | "gemini" | "modelscope" | "agnes" | "anthropic";
 
 export type ChannelProtocolProbeInput = {
     apiFormat: ChannelProbeFormat;
@@ -24,7 +24,7 @@ function normalizedBaseUrl(baseUrl: string) {
 function compatibleModelsUrl(baseUrl: string) {
     const normalized = normalizedBaseUrl(baseUrl);
     const lower = normalized.toLowerCase();
-    const apiBase = lower.endsWith("/v1") || lower.endsWith("/api/v3") || lower.endsWith("/api/plan/v3") ? normalized : `${normalized}/v1`;
+    const apiBase = lower.endsWith("/v1") ? normalized : `${normalized}/v1`;
     return `${apiBase}/models`;
 }
 
