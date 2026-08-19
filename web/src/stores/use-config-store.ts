@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 
-export type ApiCallFormat = "openai" | "gemini" | "ark";
+export type ApiCallFormat = "openai" | "gemini" | "ark" | "modelscope" | "agnes" | "anthropic";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
@@ -67,32 +67,56 @@ const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+const MODELSCOPE_BASE_URL = "https://api-inference.modelscope.cn/v1";
+const AGNES_BASE_URL = "https://apihub.agnes-ai.com";
+const ANTHROPIC_BASE_URL = "https://api.anthropic.com";
+const SUB2API_BASE_URL = "https://sub2api.leefun.top";
+const MODELSCOPE_KEY_URL = "https://www.modelscope.cn/my/access/token";
+const AGNES_KEY_URL = "https://apihub.agnes-ai.com/";
+const MODELSCOPE_RECOMMENDED_MODELS: ChannelModel[] = [
+    { name: "Qwen/Qwen-Image", capability: "image" },
+    { name: "Qwen/Qwen-Image-Edit", capability: "image" },
+    { name: "MusePublic/Qwen-Image-Edit", capability: "image" },
+    { name: "Qwen/Qwen3-235B-A22B", capability: "text" },
+    { name: "Qwen/Qwen3-VL-235B-A22B-Instruct", capability: "text" },
+    { name: "MiniMax/MiniMax-M3", capability: "text" },
+];
+const AGNES_RECOMMENDED_MODELS: ChannelModel[] = [
+    { name: "agnes-image-2.1-flash", capability: "image" },
+    { name: "agnes-image-2.0-flash", capability: "image" },
+    { name: "agnes-video-v2.0", capability: "video" },
+];
+const MODELSCOPE_MODEL_MIGRATIONS: Record<string, string> = {
+    "Tongyi-MAI/Z-Image-Turbo": "Qwen/Qwen-Image",
+    "Qwen/Qwen-Image-2512": "Qwen/Qwen-Image",
+    "Qwen/Qwen-Image-Edit-2511": "Qwen/Qwen-Image-Edit",
+    "black-forest-labs/FLUX.2-klein-9B": "Qwen/Qwen-Image",
+    "MiniMax/MiniMax-M2.7:MiniMax": "MiniMax/MiniMax-M3",
+};
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
-    baseUrl: OPENAI_BASE_URL,
+    baseUrl: SUB2API_BASE_URL,
     apiKey: "",
     apiFormat: "openai",
     channels: [
         {
             id: "default",
-            name: i18n.t("config.channels.defaultName"),
-            baseUrl: OPENAI_BASE_URL,
+            name: "我的中转站",
+            baseUrl: SUB2API_BASE_URL,
             apiKey: "",
             apiFormat: "openai",
             models: [
                 { name: "gpt-image-2", capability: "image" },
-                { name: "grok-imagine-video", capability: "video" },
-                { name: "gpt-5.5", capability: "text" },
-                { name: "gpt-4o-mini-tts", capability: "audio" },
+                { name: "gpt-4o-mini", capability: "text" },
             ],
         },
     ],
     model: "default::gpt-image-2",
     imageModel: "default::gpt-image-2",
-    videoModel: "default::grok-imagine-video",
-    textModel: "default::gpt-5.5",
-    audioModel: "default::gpt-4o-mini-tts",
+    videoModel: "",
+    textModel: "default::gpt-4o-mini",
+    audioModel: "",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
@@ -103,7 +127,7 @@ export const defaultConfig: AiConfig = {
     videoWatermark: "false",
     systemPrompt: "",
     reasoningEffort: "auto",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    models: ["default::gpt-image-2", "default::gpt-4o-mini"],
     quality: "auto",
     size: "1:1",
     background: "",
@@ -286,6 +310,18 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
     };
 }
 
+export function recommendedChannelModels(apiFormat: ApiCallFormat) {
+    if (apiFormat === "modelscope") return MODELSCOPE_RECOMMENDED_MODELS;
+    if (apiFormat === "agnes") return AGNES_RECOMMENDED_MODELS;
+    return [];
+}
+
+export function keyApplicationUrlForApiFormat(apiFormat: ApiCallFormat) {
+    if (apiFormat === "modelscope") return MODELSCOPE_KEY_URL;
+    if (apiFormat === "agnes") return AGNES_KEY_URL;
+    return "";
+}
+
 export function encodeChannelModel(channelId: string, model: string) {
     return `${channelId}${CHANNEL_MODEL_SEPARATOR}${model.trim()}`;
 }
@@ -352,7 +388,11 @@ function normalizeChannels(config: AiConfig) {
             ...channel,
             id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
             name: channel.name || (index === 0 ? i18n.t("config.channels.defaultName") : i18n.t("config.channels.indexedName", { index: index + 1 })),
-            models: normalizeChannelModels(channel.models),
+            models: normalizeChannelModels(channel.apiFormat === "modelscope" ? channel.models?.map((model) => {
+                if (typeof model === "string") return MODELSCOPE_MODEL_MIGRATIONS[model] || model;
+                const migratedName = MODELSCOPE_MODEL_MIGRATIONS[model.name];
+                return migratedName ? { ...model, name: migratedName } : model;
+            }) : channel.models),
         }),
     );
     if (!channels.length) {
@@ -373,11 +413,14 @@ function normalizeChannels(config: AiConfig) {
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
     if (apiFormat === "ark") return ARK_BASE_URL;
+    if (apiFormat === "modelscope") return MODELSCOPE_BASE_URL;
+    if (apiFormat === "agnes") return AGNES_BASE_URL;
+    if (apiFormat === "anthropic") return ANTHROPIC_BASE_URL;
     return OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" || apiFormat === "ark" ? apiFormat : "openai";
+    return apiFormat === "gemini" || apiFormat === "ark" || apiFormat === "modelscope" || apiFormat === "agnes" || apiFormat === "anthropic" ? apiFormat : "openai";
 }
 
 function uniqueModelOptions(models: string[]) {

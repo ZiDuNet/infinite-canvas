@@ -385,8 +385,11 @@ function normalizeImageCount(value: string) {
 }
 
 function apiFormatLabel(apiFormat: ApiCallFormat, t: TFunction) {
+    if (apiFormat === "anthropic") return "Anthropic";
     if (apiFormat === "gemini") return "Gemini";
     if (apiFormat === "ark") return t("config.protocols.ark");
+    if (apiFormat === "modelscope") return "ModelScope";
+    if (apiFormat === "agnes") return "Agnes AI";
     return "OpenAI";
 }
 

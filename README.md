@@ -53,13 +53,13 @@
 ## 核心功能
 
 - 无限画布：多画布项目、节点拖拽缩放、连线、小地图、撤销重做、导入导出。
-- AI 创作：浏览器前台直连你配置的 OpenAI 兼容接口，支持文生图、图生图、参考图编辑、文本问答、音频和视频生成。
+- AI 创作：默认由浏览器直连你配置的 OpenAI 兼容接口；ModelScope 免费/试用推荐模型和 Agnes AI 图片/视频模型经无状态渠道网关调用，避免浏览器 CORS 限制。
 - 画布助手：围绕选中节点和上游节点对话、生图，并把结果插回画布。
 - 本地 Agent：通过本机 Canvas Agent 连接 Codex / Claude Code，让 Agent 通过 MCP 操作当前画布；
 - Codex App 插件：提供 Codex app 插件，安装后会自动注册 MCP 并尝试拉起本地 Agent。
 - 插件系统：支持通过 URL 动态安装 / 启用 / 更新 / 卸载远程节点插件，并提供 TypeScript SDK 自行开发画布节点插件。
 - 自定义接口调用：可自定义生图 / 视频接口的调用方式，灵活适配各类中转站与自建服务。
-- 提示词库：浏览器前端直连多个 GitHub 开源项目，并缓存到 IndexedDB。
+- 提示词库：浏览器前端通过同源网关适配多个开源提示词来源，并缓存到 IndexedDB。
 
 完整功能说明见 [功能介绍](docs/content/docs/overview/features.mdx)。
 
@@ -67,12 +67,22 @@
 
 ## 快速开始
 
-AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器本地。
+AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器本地。渠道网关不提供登录、用户、资产、提示词或生成记录数据库，也不会保存用户 API Key。
 
 ### 本地开发
 
 ```bash
 git clone git@github.com:basketikun/infinite-canvas.git
+cd infinite-canvas
+cp .env.example .env
+cd server
+npm install
+npm run dev
+```
+
+另开一个终端启动前端：
+
+```bash
 cd infinite-canvas
 cd web
 bun install
@@ -87,7 +97,11 @@ cd infinite-canvas
 docker compose up -d
 ```
 
-运行后默认端口3000，可访问 `http://localhost:3000`。
+运行后默认端口3000，可访问 `http://localhost:3000`。新建渠道后选择「ModelScope 免费/试用推荐」或「Agnes AI」，系统会带入推荐模型，API Key 仍只保存在当前浏览器。
+
+ModelScope 生图采用异步任务接口，生成时由网关提交并轮询任务结果。是否有免费额度、模型可用性和限流由 ModelScope 当前账号权限决定。Agnes 视频可直接文生视频；无云存储模式下，图生视频只接受公网参考图 URL。
+
+提示词中心接入 [RoseKhlifa/Image-Prompts](https://github.com/RoseKhlifa/Image-Prompts) 中的 5 个独立来源，默认只开启 [Liblib Inspiration](https://www.liblib.art/inspiration)，其余来源可在配置中手动开启。网关会从公开 API 按来源建立增量分页索引，提示词中心滚动时继续加载下一批并补齐详情，避免一次性下载数万条内容和浏览器跨域请求；内容仍只缓存到当前浏览器。
 
 首次打开后进入右上角配置，填入自己的 OpenAI 兼容 `Base URL` 和 `API Key`。
 

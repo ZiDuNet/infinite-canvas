@@ -2,17 +2,51 @@ export type IndexedDbStoreUsage = { name: string; records: number; bytes: number
 export type IndexedDbDatabaseUsage = { name: string; version: number; bytes: number; stores: IndexedDbStoreUsage[] };
 export type LocalStorageUsage = { usage: number; quota: number; contentBytes: number; databases: IndexedDbDatabaseUsage[] };
 
+const DATABASE_NAME = "infinite-canvas";
+
 export async function readLocalStorageUsage(): Promise<LocalStorageUsage> {
-    const [estimate, database] = await Promise.all([navigator.storage.estimate(), readDatabaseUsage("infinite-canvas")]);
+    const [estimate, database] = await Promise.all([navigator.storage.estimate(), readDatabaseUsage(DATABASE_NAME)]);
     return { usage: estimate.usage!, quota: estimate.quota!, contentBytes: database.bytes, databases: [database] };
 }
 
-function readDatabaseUsage(name: string) {
-    return new Promise<IndexedDbDatabaseUsage>((resolve, reject) => {
+export async function clearLocalStorageStore(databaseName: string, storeName: string) {
+    const database = await openDatabase(databaseName);
+    if (!database.objectStoreNames.contains(storeName)) {
+        database.close();
+        return;
+    }
+    await clearObjectStores(database, [storeName]);
+    database.close();
+}
+
+export async function clearAllLocalStorage(databaseName: string) {
+    const database = await openDatabase(databaseName);
+    await clearObjectStores(database, Array.from(database.objectStoreNames));
+    database.close();
+}
+
+function openDatabase(name: string) {
+    return new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open(name);
         request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-            const database = request.result;
+        request.onsuccess = () => resolve(request.result);
+    });
+}
+
+function clearObjectStores(database: IDBDatabase, storeNames: string[]) {
+    if (!storeNames.length) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction(storeNames, "readwrite");
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error || new Error("清空本地存储事务已中止"));
+        storeNames.forEach((storeName) => transaction.objectStore(storeName).clear());
+    });
+}
+
+function readDatabaseUsage(name: string) {
+    return openDatabase(name).then((database) => {
+        return new Promise<IndexedDbDatabaseUsage>((resolve, reject) => {
             const names = Array.from(database.objectStoreNames);
             if (!names.length) {
                 database.close();
@@ -24,7 +58,7 @@ function readDatabaseUsage(name: string) {
                 .then((stores) => resolve({ name, version: database.version, bytes: stores.reduce((total, store) => total + store.bytes, 0), stores: stores.sort((a, b) => b.bytes - a.bytes) }))
                 .catch(reject)
                 .finally(() => database.close());
-        };
+        });
     });
 }
 

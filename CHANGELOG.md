@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-+ [新增] 提示词来源新增 Freestylefly GPT Image 2 内置来源。
++ [新增] 增加无状态 ModelScope 与 Agnes AI 渠道网关，支持 ModelScope 异步生图和 Agnes 图片、视频生成。
++ [新增] 提示词中心接入 RoseKhlifa/Image-Prompts 的 5 个独立来源，默认只开启 Liblib Inspiration；网关建立增量分页索引，滚动时按来源继续补齐公开 API 的提示词详情并缓存到浏览器。
 
 ## v0.15.1 - 2026-08-07
 

@@ -1,10 +1,10 @@
-import { Alert, Button, Progress, Spin } from "antd";
+import { Alert, App, Button, Progress, Spin, Tooltip } from "antd";
 import type { TFunction } from "i18next";
-import { Database, HardDrive, Layers3, RefreshCw } from "lucide-react";
+import { Database, HardDrive, Layers3, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
-import { readLocalStorageUsage, type LocalStorageUsage } from "@/services/local-storage-usage";
+import { clearAllLocalStorage, clearLocalStorageStore, readLocalStorageUsage, type LocalStorageUsage } from "@/services/local-storage-usage";
 
 const storeLabelKeys: Record<string, string> = {
     app_state: "appState",
@@ -17,9 +17,12 @@ const storeLabelKeys: Record<string, string> = {
 };
 
 export function ConfigLocalStorage({ active }: { active: boolean }) {
+    const { message, modal } = App.useApp();
     const { t } = useTranslation();
     const [usage, setUsage] = useState<LocalStorageUsage | null>(null);
     const [loading, setLoading] = useState(false);
+    const [clearingStore, setClearingStore] = useState("");
+    const [clearingAll, setClearingAll] = useState(false);
     const [error, setError] = useState("");
 
     const refresh = useCallback(async () => {
@@ -38,6 +41,55 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
         if (active && !usage) void refresh();
     }, [active, refresh, usage]);
 
+    const clearStore = (databaseName: string, storeName: string) => {
+        modal.confirm({
+            title: t("config.localStorage.clearStoreTitle", { name: storeLabel(storeName, t) }),
+            content: t("config.localStorage.clearStoreDescription"),
+            okText: t("config.localStorage.clear"),
+            okButtonProps: { danger: true },
+            cancelText: t("common.cancel"),
+            onOk: async () => {
+                setClearingStore(`${databaseName}:${storeName}`);
+                try {
+                    await clearLocalStorageStore(databaseName, storeName);
+                    if (storeName === "app_state") {
+                        window.location.reload();
+                        return;
+                    }
+                    await refresh();
+                    message.success(t("config.localStorage.cleared", { name: storeLabel(storeName, t) }));
+                } catch (reason) {
+                    message.error(reason instanceof Error ? reason.message : t("config.localStorage.clearFailed"));
+                } finally {
+                    setClearingStore("");
+                }
+            },
+        });
+    };
+
+    const clearAll = () => {
+        const databaseNames = usage?.databases.map((database) => database.name) || [];
+        if (!databaseNames.length) return;
+        modal.confirm({
+            title: t("config.localStorage.clearAllTitle"),
+            content: t("config.localStorage.clearAllDescription"),
+            okText: t("config.localStorage.clearAll"),
+            okButtonProps: { danger: true },
+            cancelText: t("common.cancel"),
+            onOk: async () => {
+                setClearingAll(true);
+                try {
+                    await Promise.all(databaseNames.map((databaseName) => clearAllLocalStorage(databaseName)));
+                    window.location.reload();
+                } catch (reason) {
+                    message.error(reason instanceof Error ? reason.message : t("config.localStorage.clearFailed"));
+                } finally {
+                    setClearingAll(false);
+                }
+            },
+        });
+    };
+
     const indexedDbBytes = usage?.contentBytes ?? 0;
     const percent = usage ? Math.min(100, (usage.usage / usage.quota) * 100) : 0;
 
@@ -52,9 +104,14 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
                         </div>
                         <div className="mt-1 text-xs text-stone-500">{t("config.localStorage.description")}</div>
                     </div>
-                    <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void refresh()}>
-                        {t("config.localStorage.refresh")}
-                    </Button>
+                    <div className="flex flex-wrap justify-end gap-2">
+                        <Button danger icon={<Trash2 className="size-4" />} disabled={!usage || clearingAll} loading={clearingAll} onClick={clearAll}>
+                            {t("config.localStorage.clearAll")}
+                        </Button>
+                        <Button icon={<RefreshCw className="size-4" />} loading={loading} disabled={clearingAll} onClick={() => void refresh()}>
+                            {t("config.localStorage.refresh")}
+                        </Button>
+                    </div>
                 </div>
                 {error ? <Alert className="mt-4" type="error" showIcon message={t("config.localStorage.readFailed")} description={error} /> : null}
                 {!usage && loading ? (
@@ -87,13 +144,26 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
                     </div>
                     <div className="divide-y divide-stone-200 dark:divide-stone-800">
                         {database.stores.map((store) => (
-                            <div key={store.name} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-3 text-sm">
+                            <div key={store.name} className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-4 px-4 py-3 text-sm">
                                 <div className="min-w-0">
                                     <div className="truncate font-medium">{storeLabel(store.name, t)}</div>
                                     <div className="mt-0.5 truncate font-mono text-[11px] text-stone-500">{store.name}</div>
                                 </div>
                                 <div className="text-right text-xs text-stone-500 tabular-nums">{t("config.localStorage.records", { count: store.records })}</div>
                                 <div className="w-20 text-right font-medium tabular-nums">{formatStorageBytes(store.bytes)}</div>
+                                <Tooltip title={t("config.localStorage.clearStore", { name: storeLabel(store.name, t) })}>
+                                    <Button
+                                        danger
+                                        type="text"
+                                        size="small"
+                                        shape="circle"
+                                        aria-label={t("config.localStorage.clearStore", { name: storeLabel(store.name, t) })}
+                                        disabled={!store.records || clearingAll}
+                                        loading={clearingStore === `${database.name}:${store.name}`}
+                                        icon={<Trash2 className="size-3.5" />}
+                                        onClick={() => clearStore(database.name, store.name)}
+                                    />
+                                </Tooltip>
                             </div>
                         ))}
                     </div>
