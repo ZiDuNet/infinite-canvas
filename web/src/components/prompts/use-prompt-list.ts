@@ -15,7 +15,7 @@ export function usePromptList({ keyword, tags, category, enabled = true }: { key
         queryKey: ["prompts", debouncedKeyword, tags, category],
         queryFn: ({ pageParam }) => fetchPrompts({ keyword: debouncedKeyword, tag: tags, category, page: pageParam, pageSize: PROMPT_PAGE_SIZE }),
         initialPageParam: 1,
-        getNextPageParam: (lastPage, pages) => (pages.reduce((total, page) => total + page.items.length, 0) < lastPage.total ? pages.length + 1 : undefined),
+        getNextPageParam: (lastPage, pages) => (lastPage.hasMore ? pages.length + 1 : undefined),
         enabled,
     });
     const firstPage = query.data?.pages[0];
@@ -25,5 +25,6 @@ export function usePromptList({ keyword, tags, category, enabled = true }: { key
         tags: useMemo(() => [ALL_PROMPTS_OPTION, ...(firstPage?.tags || [])], [firstPage?.tags]),
         categories: useMemo(() => [ALL_PROMPTS_OPTION, ...(firstPage?.categories || [])], [firstPage?.categories]),
         total: firstPage?.total || 0,
+        totalExact: firstPage?.totalExact || false,
     };
 }

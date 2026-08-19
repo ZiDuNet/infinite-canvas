@@ -385,7 +385,10 @@ function normalizeImageCount(value: string) {
 }
 
 function apiFormatLabel(apiFormat: ApiCallFormat) {
+    if (apiFormat === "anthropic") return "Anthropic";
     if (apiFormat === "gemini") return "Gemini";
+    if (apiFormat === "modelscope") return "ModelScope";
+    if (apiFormat === "agnes") return "Agnes AI";
     return "OpenAI";
 }
 

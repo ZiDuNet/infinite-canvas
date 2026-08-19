@@ -8,6 +8,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
+import { executeRuntime, isRuntimeApiFormat } from "./runtime";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -94,6 +95,11 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
+type AnthropicPayload = {
+    content?: Array<{ type?: string; text?: string }>;
+    error?: { message?: string };
+};
+type AnthropicStreamState = { buffer: string; text: string; error?: string };
 type RequestOptions = { signal?: AbortSignal };
 
 const QUALITY_BASE: Record<string, number> = {
@@ -365,6 +371,94 @@ function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
         "x-goog-api-key": config.apiKey,
         "Content-Type": "application/json",
     };
+}
+
+function anthropicHeaders(config: Pick<AiConfig, "apiKey">, contentType?: string) {
+    return {
+        "x-api-key": config.apiKey,
+        "anthropic-version": "2023-06-01",
+        ...(contentType ? { "Content-Type": contentType } : {}),
+    };
+}
+
+function anthropicContent(content: ResponseMessageContent) {
+    if (!Array.isArray(content)) return String(content || "");
+    return content.map((item) => {
+        if (item.type === "text") return { type: "text" as const, text: item.text };
+        const url = item.image_url.url;
+        const match = url.match(/^data:([^;,]+);base64,(.+)$/);
+        if (match) return { type: "image" as const, source: { type: "base64" as const, media_type: match[1], data: match[2] } };
+        return { type: "image" as const, source: { type: "url" as const, url } };
+    });
+}
+
+function anthropicMessages(config: AiConfig, messages: AiTextMessage[]) {
+    return messages
+        .filter((message) => message.role !== "system")
+        .map((message) => ({ role: message.role === "assistant" ? "assistant" as const : "user" as const, content: anthropicContent(message.content) }));
+}
+
+function anthropicSystemPrompt(config: AiConfig, messages: AiTextMessage[]) {
+    return [config.systemPrompt.trim(), ...messages.filter((message) => message.role === "system").map((message) => anthropicContent(message.content)).flat()]
+        .filter((value) => typeof value === "string" ? value : Boolean(value))
+        .map((value) => typeof value === "string" ? value : JSON.stringify(value))
+        .join("\n\n");
+}
+
+function consumeAnthropicStreamBlock(block: string, state: AnthropicStreamState, onDelta: (text: string) => void) {
+    const data = block.split(/\r?\n/).find((line) => line.startsWith("data:"))?.slice(5).trim();
+    if (!data || data === "[DONE]") return;
+    const event = JSON.parse(data) as Record<string, unknown>;
+    const error = responseErrorMessage(event);
+    if (error) state.error = error;
+    const delta = isRecord(event.delta) ? event.delta : undefined;
+    if (event.type === "content_block_delta" && delta && typeof delta.text === "string") {
+        state.text += delta.text;
+        onDelta(state.text);
+    }
+}
+
+async function requestAnthropicResponse(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
+    const response = await fetch(aiApiUrl(config, "/messages"), {
+        method: "POST",
+        headers: anthropicHeaders(config, "application/json"),
+        body: JSON.stringify({
+            model: config.model,
+            max_tokens: 2048,
+            messages: anthropicMessages(config, messages),
+            ...(anthropicSystemPrompt(config, messages) ? { system: anthropicSystemPrompt(config, messages) } : {}),
+            stream: true,
+        }),
+        signal: options?.signal,
+    });
+    if (!response.ok) throw new Error(await readFetchError(response, apiText("requestFailed")));
+    if (!response.body) {
+        const payload = (await response.json()) as AnthropicPayload;
+        if (payload.error?.message) throw new Error(payload.error.message);
+        const text = payload.content?.map((item) => item.text || "").join("") || "";
+        if (text) onDelta(text);
+        return text;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const state: AnthropicStreamState = { buffer: "", text: "" };
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        state.buffer += decoder.decode(value, { stream: true });
+        for (;;) {
+            const match = state.buffer.match(/\r?\n\r?\n/);
+            if (!match) break;
+            const index = match.index ?? 0;
+            consumeAnthropicStreamBlock(state.buffer.slice(0, index), state, onDelta);
+            state.buffer = state.buffer.slice(index + match[0].length);
+        }
+        if (state.error) throw new Error(state.error);
+    }
+    state.buffer += decoder.decode();
+    if (state.buffer.trim()) consumeAnthropicStreamBlock(state.buffer, state, onDelta);
+    if (state.error) throw new Error(state.error);
+    return state.text;
 }
 
 function withSystemMessage<T extends ResponseInputMessage>(config: AiConfig, messages: T[]): ResponseInputMessage[] {
@@ -715,9 +809,14 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 }
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    const requestConfig = resolveModelRequestConfig(config, config.imageModel || config.model);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const script = resolveModelScript(config, config.imageModel || config.model);
+    if (isRuntimeApiFormat(requestConfig.apiFormat)) {
+        const result = await executeRuntime(requestConfig, { capability: "image", prompt });
+        if (!result.images.length) throw new Error(apiText("noContent"));
+        return result.images;
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
@@ -737,6 +836,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
+    if (requestConfig.apiFormat === "anthropic") throw new Error("Anthropic 协议当前仅支持文本对话，请为图片模型选择 OpenAI 兼容协议。");
     if (requestConfig.apiFormat === "gemini") {
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, options);
@@ -773,10 +873,16 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 }
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    const requestConfig = resolveModelRequestConfig(config, config.imageModel || config.model);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const script = resolveModelScript(config, config.imageModel || config.model);
+    if (isRuntimeApiFormat(requestConfig.apiFormat)) {
+        if (mask) throw new Error(apiText("maskModelUnsupported"));
+        const result = await executeRuntime(requestConfig, { capability: "image", prompt: requestPrompt, images: await Promise.all(references.map((image) => imageToDataUrl(image))) });
+        if (!result.images.length) throw new Error(apiText("noContent"));
+        return result.images;
+    }
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
@@ -797,6 +903,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
+    if (requestConfig.apiFormat === "anthropic") throw new Error("Anthropic 协议当前仅支持文本对话，请为图片模型选择 OpenAI 兼容协议。");
     if (requestConfig.apiFormat === "gemini") {
         if (mask) throw new Error(apiText("geminiMaskUnsupported"));
         try {
@@ -838,8 +945,13 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 }
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
-    const script = resolveModelScript(config, config.model || config.textModel);
+    const requestConfig = resolveModelRequestConfig(config, config.textModel || config.model);
+    const script = resolveModelScript(config, config.textModel || config.model);
+    if (isRuntimeApiFormat(requestConfig.apiFormat)) {
+        const answer = (await executeRuntime(requestConfig, { capability: "text", messages })).text?.trim() || apiText("noContent");
+        onDelta(answer);
+        return answer;
+    }
     if (script) {
         try {
             const answer = await runModelPlugin<string>({
@@ -858,6 +970,11 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
         }
     }
     try {
+        if (requestConfig.apiFormat === "anthropic") {
+            const answer = (await requestAnthropicResponse(requestConfig, messages, onDelta, options)).trim() || apiText("noContent");
+            if (answer === apiText("noContent")) onDelta(answer);
+            return answer;
+        }
         if (requestConfig.apiFormat === "gemini") {
             const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || apiText("noContent");
             if (answer === apiText("noContent")) onDelta(answer);
@@ -885,13 +1002,10 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
                 .filter((id): id is string => Boolean(id))
                 .sort((a, b) => a.localeCompare(b));
         }
-        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
-            headers: {
-                Authorization: `Bearer ${config.apiKey}`,
-            },
+        const response = await axios.get<{ data?: Array<{ id?: string }>; models?: Array<{ name?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
+            headers: config.apiFormat === "anthropic" ? anthropicHeaders(config) : { Authorization: `Bearer ${config.apiKey}` },
         });
-        return (response.data.data || [])
-            .map((model) => model.id)
+        return [...(response.data.data || []).map((model) => model.id), ...(response.data.models || []).map((model) => model.name)]
             .filter((id): id is string => Boolean(id))
             .sort((a, b) => a.localeCompare(b));
     } catch (error) {

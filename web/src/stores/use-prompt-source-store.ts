@@ -9,6 +9,8 @@ export type PromptSourceSchedule = {
 };
 
 const PROMPT_SOURCE_STORE_KEY = "infinite-canvas:prompt_source_store_v2";
+const PROMPT_SOURCE_STORE_VERSION = 1;
+const LIBLIB_SOURCE_ID = "rose-liblib-inspiration";
 
 const defaultSchedule: PromptSourceSchedule = {
     intervalMinutes: 30,
@@ -45,6 +47,17 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
         }),
         {
             name: PROMPT_SOURCE_STORE_KEY,
+            version: PROMPT_SOURCE_STORE_VERSION,
+            migrate: (persisted: unknown, version: number) => {
+                if (version >= PROMPT_SOURCE_STORE_VERSION || !persisted || typeof persisted !== "object") return persisted;
+                const state = persisted as { sources?: PromptSource[] };
+                return {
+                    ...state,
+                    sources: Array.isArray(state.sources)
+                        ? state.sources.map((source) => source.builtIn && source.id !== LIBLIB_SOURCE_ID ? { ...source, enabled: false } : source)
+                        : state.sources,
+                };
+            },
             partialize: (state) => ({ sources: state.sources, schedule: state.schedule }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<PromptSourceStore>;

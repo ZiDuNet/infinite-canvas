@@ -14,6 +14,7 @@ export type RawPrompt = {
     updatedAt: string;
     author?: string;
     sourceUrl?: string;
+    sourceSite?: string;
     imageMode?: string;
     imageModel?: string;
     imageSize?: string;
@@ -22,17 +23,33 @@ export type RawPrompt = {
 
 type RunOptions = { signal?: AbortSignal };
 
-async function fetchSource(source: PromptSource, options?: RunOptions) {
-    const response = await fetch(source.url, { cache: "no-store", signal: options?.signal });
+export type RawPromptPage = {
+    items: RawPrompt[];
+    hasMore: boolean;
+    total?: number;
+};
+
+async function fetchSource(url: string, options?: RunOptions) {
+    const response = await fetch(url, { cache: "no-store", signal: options?.signal });
     if (!response.ok) throw new Error(i18n.t("config.promptSources.runtime.requestFailed", { status: response.status }));
-    return response.json();
+    return { data: await response.json(), response };
 }
 
 export async function runPromptSource(source: PromptSource, options?: RunOptions): Promise<RawPrompt[]> {
+    return (await runPromptSourcePage(source, 1, options)).items;
+}
+
+export async function runPromptSourcePage(source: PromptSource, page = 1, options?: RunOptions): Promise<RawPromptPage> {
     if (!source.url.trim()) throw new Error(i18n.t("config.promptSources.runtime.urlRequired"));
     let data: unknown;
+    let hasMore = false;
+    let total: number | undefined;
     try {
-        data = await fetchSource(source, options);
+        const result = await fetchSource(sourcePageUrl(source, page), options);
+        data = result.data;
+        hasMore = source.pagination === "remote" && result.response.headers.get("x-prompt-source-has-more") === "true";
+        const headerTotal = Number(result.response.headers.get("x-prompt-source-total"));
+        total = Number.isFinite(headerTotal) && headerTotal >= 0 ? headerTotal : undefined;
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
         throw new Error(i18n.t("config.promptSources.runtime.fetchFailed", { name: source.name, error: error instanceof Error ? error.message : String(error) }));
@@ -40,7 +57,14 @@ export async function runPromptSource(source: PromptSource, options?: RunOptions
 
     const items = parseJsonSource(data, source);
     if (source.builtIn && !items.length) throw new Error(i18n.t("config.promptSources.runtime.noPrompts", { name: source.name }));
-    return items;
+    return { items, hasMore, total };
+}
+
+function sourcePageUrl(source: PromptSource, page: number) {
+    if (source.pagination !== "remote") return source.url;
+    const url = new URL(source.url, window.location.origin);
+    url.searchParams.set("page", String(Math.max(1, page)));
+    return url.toString();
 }
 
 function parseJsonSource(data: unknown, source: PromptSource) {
@@ -74,6 +98,7 @@ function normalizeItems(values: unknown[], source: PromptSource) {
             updatedAt: stringValue(record.updatedAt),
             author: stringValue(record.author),
             sourceUrl: absoluteUrl(source.url, stringValue(record.sourceUrl)),
+            sourceSite: optionalString(record.sourceSite),
             imageMode: optionalString(record.imageMode),
             imageModel: optionalString(record.imageModel),
             imageSize: optionalString(record.imageSize),
